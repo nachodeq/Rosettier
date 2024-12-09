@@ -1,0 +1,38 @@
+name: Build Rosettier for Linux
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install PyInstaller
+      run: pip install pyinstaller
+
+    - name: Build Executable
+      run: |
+        pyinstaller --onefile --add-data "assets/logo.png:assets" --noconsole --icon=assets/Rosetter.ico app.py
+
+    - name: Upload Linux Executable
+      uses: actions/upload-artifact@v2
+      with:
+        name: Rosettier-Linux
+        path: dist/app
