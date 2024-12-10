@@ -29,7 +29,7 @@ jobs:
 
     - name: Build Executable
       run: |
-        pyinstaller --onefile --add-data "assets\\logo.png;assets" --noconsole --icon=assets\\Rosetter.ico --hidden-import importlib_metadata --hidden-import streamlit.app --hidden-import streamlit.web --hidden-import streamlit.runtime.scriptrunner --copy-metadata streamlit --copy-metadata validators app.py
+        pyinstaller --onefile --add-data "assets\\logo.png;assets" --noconsole --icon=assets\\Rosetter.ico --hidden-import importlib_metadata --hidden-import streamlit.app --hidden-import streamlit.web --hidden-import streamlit.runtime.scriptrunner --copy-metadata streamlit app.py
 
     - name: Upload Windows Executable
       uses: actions/upload-artifact@v3
