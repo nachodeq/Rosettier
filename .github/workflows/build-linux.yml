@@ -27,9 +27,22 @@ jobs:
     - name: Install PyInstaller
       run: pip install pyinstaller
 
+    - name: Clean Previous Builds
+      run: |
+        rm -rf build dist app.spec
+
     - name: Build Executable
       run: |
-        pyinstaller --onefile --add-data "assets/logo.png:assets" --noconsole --icon=assets/Rosetter.ico app.py
+        pyinstaller --onefile \
+                   --add-data "assets/logo.png:assets" \
+                   --noconsole \
+                   --icon=assets/Rosetter.ico \
+                   --hidden-import importlib_metadata \
+                   --hidden-import streamlit.app \
+                   --hidden-import streamlit.web \
+                   --hidden-import streamlit.runtime.scriptrunner \
+                   --copy-metadata streamlit \
+                   app.py
 
     - name: Upload Linux Executable
       uses: actions/upload-artifact@v3
