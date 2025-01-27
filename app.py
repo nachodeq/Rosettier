@@ -944,6 +944,6 @@ with main_tabs[1]:
 st.markdown("---")
 st.markdown("""
 **Authorship Statement**  
-Developed by [Your Name] in 2025.  
-Please contact me for licensing or collaboration inquiries.
+Developed by Ignacio de Quinto in 2025.  
+Please contact me at idequintoc@gmail.com for licensing or collaboration inquiries.
 """)
