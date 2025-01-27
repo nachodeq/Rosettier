@@ -940,3 +940,10 @@ with main_tabs[1]:
             file_name=f"{dl_name_combined}.tsv",
             mime='text/tab-separated-values'
         )
+# Authorship statement
+st.markdown("---")
+st.markdown("""
+**Authorship Statement**  
+Developed by [Your Name] in 2025.  
+Please contact me for licensing or collaboration inquiries.
+""")
