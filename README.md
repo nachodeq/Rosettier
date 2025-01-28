@@ -4,7 +4,7 @@ A free, user-friendly web application for planning 96 or 384-well plate experime
 
 ## Key Features
 - **Experiment Planning**: Quickly set up your 96 or 384-well plate layout through a clean, intuitive interface.
-- **Excel Generation**: Export your planned experiments into an Excel format for more advanced or custom data analysis.
+- **Excel Generation**: Export your planned experiments into an file format for more advanced or custom data analysis.
 
 ## Getting Started
 1. **Access the App**  
