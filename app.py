@@ -816,8 +816,21 @@ with main_tabs[1]:
 
     # Manage each sub-plate
     for i in range(1, 5):
-        with plate_subtabs[i-1]:
-            manage_plate(i)
+            with plate_subtabs[i-1]:
+                manage_plate(i)
+
+        # **Add the Permanent Informational Note Here**
+    st.info("""
+    **Important Note:**  
+    When combining plates, the wells are mapped as follows:
+    - **A1** of the combined 384-well plate is **A1** from **Plate 1**
+    - **A2** of the combined 384-well plate is **A1** from **Plate 2**
+    - **B1** of the combined 384-well plate is **A1** from **Plate 3**
+    - **B2** of the combined 384-well plate is **A1** from **Plate 4**
+
+
+    ... and so on, interleaving wells from each 96-well plate accordingly.
+    """)
 
     # Combine
     if st.button("Combine All Plates into 384-Well Plate", key='btn_combine_384'):
@@ -830,6 +843,7 @@ with main_tabs[1]:
         coerce_mixed_columns_to_string(st.session_state['combined_plate_data'])
         st.success("Successfully combined the four 96-well plates into a 384-well plate.")
         st.session_state.refresh = not st.session_state.refresh
+
 
     # Undo for combined
     if st.button("Undo Last Action (Combined Plate)", key='undo_combined'):
@@ -940,10 +954,10 @@ with main_tabs[1]:
             file_name=f"{dl_name_combined}.tsv",
             mime='text/tab-separated-values'
         )
-# Authorship statement
+# End of file: Authorship statement
 st.markdown("---")
 st.markdown("""
 **Authorship Statement**  
 Developed by Ignacio de Quinto in 2025.  
-Please contact me at idequintoc@gmail.com for licensing or collaboration inquiries.
+Contact me at idequintoc@gmail.com for licensing or collaboration inquiries.
 """)
