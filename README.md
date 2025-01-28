@@ -1,6 +1,6 @@
 # Rosettier App
 
-A free, user-friendly web application for planning 96 or 384-well plate experiments. Rosettier simplifies the process by providing an easy interface to layout your plates and automatically generate an Excel file for further analysis.
+A free, user-friendly web application for planning 96 or 384-well plate experiments. Rosettier simplifies the process by providing an easy interface to layout your plates and automatically generate a file for further analysis.
 
 ## Key Features
 - **Experiment Planning**: Quickly set up your 96 or 384-well plate layout through a clean, intuitive interface.
