@@ -636,7 +636,6 @@ with main_tabs[1]:
 
 st.markdown("---")
 st.markdown("""
-**Authorship Statement**  
 Developed by Ignacio de Quinto in 2025.  
 Contact me at idequintoc@gmail.com for licensing or collaboration inquiries.
 """)
