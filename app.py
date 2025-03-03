@@ -20,19 +20,24 @@ def resource_path(relative_path):
 
 favicon_path = resource_path("assets/icon.ico")
 favicon = Image.open(favicon_path) if os.path.exists(favicon_path) else None
-
 st.set_page_config(page_title="Rosettier", page_icon=favicon, layout="centered")
+
+# -------------------------
+# Helper: Conditional Rerun
+# -------------------------
+def rerun():
+    if hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+    else:
+        st.info("Please refresh or interact again to see updates.")
 
 # -------------------------
 # Plate definitions and constants
 # -------------------------
 rows_96 = list("ABCDEFGH")
 columns_96 = list(range(1, 13))
-
 rows_384 = list("ABCDEFGHIJKLMNOP")
 columns_384 = list(range(1, 25))
-
-# Precomputed row indices for plotting
 row_indices_96 = {row: 8 - i for i, row in enumerate(rows_96)}
 row_indices_384 = {row: 16 - i for i, row in enumerate(rows_384)}
 
@@ -41,9 +46,7 @@ row_indices_384 = {row: 16 - i for i, row in enumerate(rows_384)}
 # -------------------------
 def generate_random_color():
     return "#{:06x}".format(random.randint(0, 0xFFFFFF))
-
 def get_color(variable, value):
-    """Retrieves or assigns a random color for a given variable-value pair."""
     if variable not in st.session_state.color_map:
         st.session_state.color_map[variable] = {}
     if value not in st.session_state.color_map[variable]:
@@ -54,37 +57,16 @@ def get_color(variable, value):
 # Utility functions
 # -------------------------
 def parse_well(well):
-    """Parse a well identifier (e.g., 'A1') into its row letter and column number."""
     return well[0], int(well[1:])
-
-def create_plate_figure(df, plate_type="96", current_variable=None):
-    """
-    Create a scatter plot for a plate.
     
-    Parameters:
-      - df: DataFrame containing at least a 'Well' column.
-      - plate_type: "96" or "384" (controls marker size, grid range, etc.)
-      - current_variable: if provided, use its values to assign colors.
-    """
+def create_plate_figure(df, plate_type="96", current_variable=None):
     df_plot = df.copy()
-
-    # Set parameters based on plate type
     if plate_type == "96":
-        num_cols = 12
-        num_rows = 8
-        marker_size = 40
-        row_indices = row_indices_96
-        tick_text = rows_96
-        title = "Rosettier - 96-Well Plate"
-    else:  # "384"
-        num_cols = 24
-        num_rows = 16
-        marker_size = 15
-        row_indices = row_indices_384
-        tick_text = rows_384
-        title = "Rosettier - 384-Well Plate"
-
-    # Assign colors if a variable is chosen
+        num_cols, num_rows, marker_size = 12, 8, 40
+        row_indices, tick_text, title = row_indices_96, rows_96, "Rosettier - 96-Well Plate"
+    else:
+        num_cols, num_rows, marker_size = 24, 16, 15
+        row_indices, tick_text, title = row_indices_384, rows_384, "Rosettier - 384-Well Plate"
     if current_variable and current_variable in df_plot.columns:
         colors = df_plot['Well'].map(lambda well: 
             get_color(current_variable, df_plot.loc[df_plot['Well'] == well, current_variable].values[0])
@@ -92,34 +74,23 @@ def create_plate_figure(df, plate_type="96", current_variable=None):
             else 'lightgray')
     else:
         colors = 'lightgray'
-
-    # Parse the well identifier into row and column
-    df_plot[['Parsed_Row', 'Parsed_Col']] = df_plot['Well'].apply(
-        lambda w: pd.Series(parse_well(w))
-    )
+    df_plot[['Parsed_Row', 'Parsed_Col']] = df_plot['Well'].apply(lambda w: pd.Series(parse_well(w)))
     df_plot['Y'] = df_plot['Parsed_Row'].map(row_indices)
     df_plot['X'] = df_plot['Parsed_Col']
-
-    # Build the scatter plot
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=df_plot['X'],
         y=df_plot['Y'],
         mode='markers+text',
-        marker=dict(
-            size=marker_size,
-            color=colors,
-            line=dict(width=1 if plate_type=="96" else 0.5, color='black'),
-            opacity=0.8
-        ),
+        marker=dict(size=marker_size, color=colors,
+                    line=dict(width=1 if plate_type=="96" else 0.5, color='black'),
+                    opacity=0.8),
         text=df_plot['Well'],
         customdata=df_plot.index,
         textposition="middle center",
         hoverinfo='text',
         name='Wells'
     ))
-
-    # Set axes and grid lines
     fig.update_xaxes(range=[0.5, num_cols + 0.5], dtick=1, showgrid=True, zeroline=False, showticklabels=True)
     fig.update_yaxes(range=[0.5, num_rows + 0.5], dtick=1, showgrid=True, zeroline=False, 
                      showticklabels=True, tickmode='array', tickvals=list(range(num_rows, 0, -1)), ticktext=tick_text)
@@ -133,7 +104,6 @@ def create_plate_figure(df, plate_type="96", current_variable=None):
             x0=0.5, y0=i, x1=num_cols+0.5, y1=i,
             line=dict(color="black", width=1 if plate_type=="96" else 0.5, dash='dot'),
             opacity=0.5)
-
     fig.update_layout(
         paper_bgcolor='white',
         plot_bgcolor='white',
@@ -144,16 +114,9 @@ def create_plate_figure(df, plate_type="96", current_variable=None):
         dragmode='select',
         margin=dict(l=20, r=20, t=80, b=20)
     )
-
     return fig
 
-# -------------------------
-# Combining 4x96 into 384 with vectorized operations
-# -------------------------
 def combine_plate_vectorized(plate_df, row_offset, col_offset):
-    """
-    Convert a 96-well plate DataFrame into combined 384-well mapping using vectorized operations.
-    """
     plate_df = plate_df.copy()
     plate_df['row_letter'] = plate_df['Well'].str[0]
     plate_df['col_num'] = plate_df['Well'].str[1:].astype(int)
@@ -168,9 +131,6 @@ def combine_plate_vectorized(plate_df, row_offset, col_offset):
     return plate_df
 
 def combine_plates(plate1, plate2, plate3, plate4):
-    """
-    Combine four 96-well plates into one 384-well plate using vectorized operations.
-    """
     combined_plate_df = st.session_state.combined_plate_data.copy().set_index('Well')
     plate_mappings = {
         1: {'plate_data': plate1, 'row_offset': 0, 'col_offset': 0},
@@ -224,28 +184,22 @@ if 'history' not in st.session_state:
         'plate_4_384_data': [],
         'combined_plate_data': []
     }
-
 initialize_plates()
 
 # -------------------------
 # History Management
 # -------------------------
 def push_history(plate_key):
-    """Save a snapshot before modifying the DataFrame."""
     st.session_state.history[plate_key].append(st.session_state[plate_key].copy(deep=True))
 
 def undo(plate_key):
-    """Undo the last action for a given plate."""
     if st.session_state.history[plate_key]:
         st.session_state[plate_key] = st.session_state.history[plate_key].pop()
         st.success(f"Undo successful for {plate_key}.")
         ensure_variables_exist(plate_key)
         coerce_mixed_columns_to_string(st.session_state[plate_key])
         remove_unused_colors()
-        if hasattr(st, "experimental_rerun"):
-            st.experimental_rerun()
-        else:
-            st.info("Please refresh or interact again to see updates.")
+        rerun()
     else:
         st.warning(f"No actions to undo for {plate_key}.")
 
@@ -253,7 +207,6 @@ def undo(plate_key):
 # Utility functions for session state management
 # -------------------------
 def remove_unused_colors():
-    """Remove colors for variable-value pairs not used in any plate."""
     all_plates = ['plate_96_data', 'plate_1_384_data', 'plate_2_384_data', 
                   'plate_3_384_data', 'plate_4_384_data', 'combined_plate_data']
     for var in st.session_state.available_variables:
@@ -267,13 +220,11 @@ def remove_unused_colors():
                 del st.session_state.color_map[var][val]
 
 def ensure_variables_exist(plate_key):
-    """Ensure each available variable is a column in the specified plate DataFrame."""
     for var in st.session_state.available_variables:
         if var not in st.session_state[plate_key].columns:
             st.session_state[plate_key][var] = pd.NA
 
 def coerce_mixed_columns_to_string(df):
-    """Convert columns with mixed types to string to avoid Arrow errors."""
     for c in df.columns:
         if c == 'Well':
             continue
@@ -284,16 +235,18 @@ def coerce_mixed_columns_to_string(df):
             except:
                 df[c] = df[c].astype(str)
 
-def safe_assign_value(df, well, column, value):
-    """Safely assign a value to a specific well and column, converting column type if needed."""
+# -------------------------
+# FIX: Updated safe_assign_value to reassign the modified DataFrame
+# -------------------------
+def safe_assign_value(df, well, column, value, plate_key):
     try:
         float(value)
     except ValueError:
         df[column] = df[column].astype(str)
     df.loc[df['Well'] == well, column] = value
+    st.session_state[plate_key] = df.copy()
 
 def copy_plate_data(source_key, dest_key):
-    """Copy data from source plate to destination plate."""
     push_history(dest_key)
     source_df = st.session_state[source_key].copy(deep=True)
     st.session_state[dest_key] = source_df
@@ -306,10 +259,7 @@ def copy_plate_data(source_key, dest_key):
     coerce_mixed_columns_to_string(st.session_state[dest_key])
     remove_unused_colors()
     st.success(f"Copied data from {source_key} to {dest_key}.")
-    if hasattr(st, "experimental_rerun"):
-        st.experimental_rerun()
-    else:
-        st.info("Please refresh or interact again to see updates.")
+    rerun()
 
 # -------------------------
 # Caching expensive operations (Excel/TSV conversion)
@@ -333,11 +283,9 @@ try:
     logo = Image.open(logo_path)
 except FileNotFoundError:
     logo = None
-
 if logo:
     col1, col2, col3 = st.columns([1, 2, 1.5])
-    with col1:
-        pass
+    with col1: pass
     with col2:
         st.markdown("<h1 style='text-align: left;'>Rosettier</h1>", unsafe_allow_html=True)
     with col3:
@@ -361,7 +309,6 @@ if st.sidebar.button("Add Variable") and new_variable:
         st.sidebar.success(f"Variable '{new_variable}' added.")
     else:
         st.sidebar.warning("That variable already exists.")
-
 st.sidebar.header("Variables Legend")
 for var, values in st.session_state.color_map.items():
     st.sidebar.markdown(f"**{var}**")
@@ -384,7 +331,8 @@ with main_tabs[0]:
         undo('plate_96_data')
     st.subheader("Upload 96-Well Plate from Excel/TSV/CSV")
     up_96_file = st.file_uploader("Upload a 96-well plate file", type=["xlsx", "csv", "tsv"], key="upload_96")
-    if up_96_file:
+    # Process the upload only once
+    if up_96_file and not st.session_state.get("uploaded_96_processed", False):
         file_extension = up_96_file.name.split('.')[-1].lower()
         try:
             if file_extension == "xlsx":
@@ -407,6 +355,7 @@ with main_tabs[0]:
                 coerce_mixed_columns_to_string(st.session_state['plate_96_data'])
                 st.success("Successfully loaded 96-well data!")
                 st.session_state.refresh = not st.session_state.refresh
+                st.session_state.uploaded_96_processed = True
         except Exception as e:
             st.error(f"Failed to read file: {e}")
     ensure_variables_exist('plate_96_data')
@@ -430,11 +379,12 @@ with main_tabs[0]:
                     if val_to_assign_96:
                         push_history('plate_96_data')
                         for w in selected_wells_96:
-                            safe_assign_value(st.session_state[plate_key_96], w, var_to_assign_96, val_to_assign_96)
+                            safe_assign_value(st.session_state[plate_key_96], w, var_to_assign_96, val_to_assign_96, plate_key_96)
                             get_color(var_to_assign_96, val_to_assign_96)
                         coerce_mixed_columns_to_string(st.session_state[plate_key_96])
                         st.success(f"Assigned '{val_to_assign_96}' to wells.")
                         st.session_state.refresh = not st.session_state.refresh
+                        rerun()
                     else:
                         st.warning("Enter a value first.")
             else:
@@ -492,7 +442,7 @@ with main_tabs[1]:
             undo(plate_key)
         st.markdown("**Upload data (Excel/TSV/CSV)**")
         up_file = st.file_uploader(f"Upload Plate {plate_num} file", type=["xlsx","csv","tsv"], key=f'file_up_{plate_num}')
-        if up_file:
+        if up_file and not st.session_state.get(f"uploaded_plate_{plate_num}_processed", False):
             file_ext = up_file.name.split('.')[-1].lower()
             try:
                 if file_ext == "xlsx":
@@ -515,6 +465,7 @@ with main_tabs[1]:
                     coerce_mixed_columns_to_string(st.session_state[plate_key])
                     st.success(f"Loaded data into Plate {plate_num}.")
                     st.session_state.refresh = not st.session_state.refresh
+                    st.session_state[f"uploaded_plate_{plate_num}_processed"] = True
             except Exception as e:
                 st.error(f"Error reading file: {e}")
         ensure_variables_exist(plate_key)
@@ -536,7 +487,7 @@ with main_tabs[1]:
                         if val_assign:
                             push_history(plate_key)
                             for w in sel_wells:
-                                safe_assign_value(st.session_state[plate_key], w, var_assign, val_assign)
+                                safe_assign_value(st.session_state[plate_key], w, var_assign, val_assign, plate_key)
                                 get_color(var_assign, val_assign)
                             coerce_mixed_columns_to_string(st.session_state[plate_key])
                             st.success(f"Assigned '{val_assign}' to wells in Plate {plate_num}.")
@@ -558,8 +509,7 @@ with main_tabs[1]:
     - **A2** of the combined 384-well plate is **A1** from **Plate 2**
     - **B1** of the combined 384-well plate is **A1** from **Plate 3**
     - **B2** of the combined 384-well plate is **A1** from **Plate 4**
-    
-    ... and so on, interleaving wells from each 96-well plate accordingly.
+    ... and so on.
     """)
     if st.button("Combine All Plates into 384-Well Plate", key='btn_combine_384'):
         plate1 = st.session_state['plate_1_384_data']
@@ -595,7 +545,7 @@ with main_tabs[1]:
                     if val_assign_comb:
                         push_history('combined_plate_data')
                         for w in sel_wells_combined:
-                            safe_assign_value(st.session_state['combined_plate_data'], w, var_assign_comb, val_assign_comb)
+                            safe_assign_value(st.session_state['combined_plate_data'], w, var_assign_comb, val_assign_comb, 'combined_plate_data')
                             get_color(var_assign_comb, val_assign_comb)
                         coerce_mixed_columns_to_string(st.session_state['combined_plate_data'])
                         st.success(f"Assigned '{val_assign_comb}' to selected wells in Combined Plate.")
@@ -636,6 +586,7 @@ with main_tabs[1]:
 
 st.markdown("---")
 st.markdown("""
+**Authorship Statement**  
 Developed by Ignacio de Quinto in 2025.  
 Contact me at idequintoc@gmail.com for licensing or collaboration inquiries.
 """)
