@@ -1,6 +1,5 @@
 import os
 import sys
-import random
 import hashlib
 from io import BytesIO
 
@@ -33,10 +32,19 @@ st.set_page_config(page_title="Rosettier", page_icon=favicon, layout="centered")
 logo_path = resource_path("assets/logo.png")
 logo = load_image(logo_path) if os.path.exists(logo_path) else None
 
+# Config global para Plotly (cuando no usamos plotly_events)
+st.session_state.setdefault("plotly_config", {"displayModeBar": False, "responsive": True})
+
+# =========================
+# Rendimiento (modo ligero)
+# =========================
+st.sidebar.header("Performance")
+lite_mode = st.sidebar.checkbox("Lite mode (for older or slower machines)", value=False)
+MAX_SELECT = st.sidebar.number_input("Max wells selected at the same time", min_value=24, max_value=384, value=120, step=12)
+
 # =========================
 # Constants & plate geometry
 # =========================
-
 rows_96 = list("ABCDEFGH")
 columns_96 = list(range(1, 13))
 rows_384 = list("ABCDEFGHIJKLMNOP")
@@ -48,11 +56,10 @@ row_indices_384 = {row: 16 - i for i, row in enumerate(rows_384)}
 # ==================================
 # Session state bootstrapping / init
 # ==================================
-
 if 'available_variables' not in st.session_state:
     st.session_state.available_variables = []
 
-# selection memory for plotly
+# Persist selections
 st.session_state.setdefault("sel_wells_96", [])
 for p in (1, 2, 3, 4):
     st.session_state.setdefault(f"sel_wells_{p}", [])
@@ -99,7 +106,6 @@ initialize_plates()
 # =========================
 # Utility helpers
 # =========================
-
 def parse_well(well: str):
     well = str(well).strip().upper()
     return well[0], int(well[1:])
@@ -111,7 +117,7 @@ def ensure_variables_exist(plate_key: str):
 
 def normalize_well_column(df: pd.DataFrame):
     if "Well" in df.columns:
-        df["Well"] = df["Well"].astype(str).str.strip().str.upper().str.replace("^0*([1-9])", r"\1", regex=True)
+        df["Well"] = df["Well"].astype(str).str.strip().str.upper()
     return df
 
 def coerce_mixed_columns_to_string(df: pd.DataFrame):
@@ -132,61 +138,75 @@ def value_color(variable, value):
     h = int(hashlib.md5(key.encode()).hexdigest()[:6], 16)
     return f"#{h:06x}"
 
-def create_plate_figure(df: pd.DataFrame, plate_type="96", current_variable=None):
+def create_plate_figure(df: pd.DataFrame, plate_type="96", current_variable=None, lite_mode=False):
     df_plot = df.copy()
 
     if plate_type == "96":
-        num_cols, num_rows, marker_size = 12, 8, 40
+        num_cols, num_rows, marker_size = 12, 8, (28 if lite_mode else 40)
         row_indices, tick_text, title = row_indices_96, rows_96, "Rosettier - 96-Well Plate"
     else:
-        num_cols, num_rows, marker_size = 24, 16, 15
+        num_cols, num_rows, marker_size = 24, 16, (10 if lite_mode else 15)
         row_indices, tick_text, title = row_indices_384, rows_384, "Rosettier - 384-Well Plate"
 
-    # compute coordinates once
     parsed = df_plot['Well'].apply(parse_well)
     df_plot['Parsed_Row'] = [r for r, _ in parsed]
     df_plot['Parsed_Col'] = [c for _, c in parsed]
     df_plot['Y'] = df_plot['Parsed_Row'].map(row_indices)
     df_plot['X'] = df_plot['Parsed_Col']
 
-    # colors
+    # colores
     if current_variable and current_variable in df_plot.columns:
         vals = df_plot[current_variable]
         colors = [value_color(current_variable, v) for v in vals]
     else:
         colors = "lightgray"
 
-    fig = go.Figure()
+    # Hover text
+    if current_variable and current_variable in df_plot.columns:
+        hovertexts = df_plot.apply(
+            lambda r: f"Well: {r['Well']}<br>{current_variable}: {r[current_variable]}",
+            axis=1
+        )
+    else:
+        hovertexts = df_plot['Well']
 
-    fig.add_trace(go.Scatter(
+    # USAR WEBGL en modo ligero
+    ScatterClass = go.Scattergl if lite_mode else go.Scatter
+
+    show_text = (plate_type == "96") and (not lite_mode)  # en lite no texto, en 96 normal sí
+    mode = 'markers+text' if show_text else 'markers'
+
+    fig = go.Figure()
+    fig.add_trace(ScatterClass(
         x=df_plot['X'],
         y=df_plot['Y'],
-        mode='markers+text',
+        mode=mode,
         marker=dict(
             size=marker_size,
             color=colors,
-            line=dict(width=0.8 if plate_type == "96" else 0.5, color='black'),
-            opacity=0.9
+            line=dict(width=(0 if lite_mode else (0.8 if plate_type=="96" else 0.5)), color='black'),
+            opacity=(1.0 if lite_mode else 0.9)
         ),
-        text=df_plot['Well'],
-        customdata=df_plot.index,
-        textposition="middle center",
-        hoverinfo='text',
+        text=None if not show_text else df_plot['Well'],
+        textposition="middle center" if show_text else None,
+        hovertext=hovertexts,
+        hovertemplate="%{hovertext}<extra></extra>",
         name='Wells'
     ))
 
-    fig.update_xaxes(range=[0.5, num_cols + 0.5], dtick=1, showgrid=True, zeroline=False, showticklabels=True)
+    fig.update_xaxes(range=[0.5, num_cols + 0.5], dtick=1, showgrid=not lite_mode, zeroline=False, showticklabels=True)
     fig.update_yaxes(
-        range=[0.5, num_rows + 0.5], dtick=1, showgrid=True, zeroline=False,
+        range=[0.5, num_rows + 0.5], dtick=1, showgrid=not lite_mode, zeroline=False,
         showticklabels=True, tickmode='array', tickvals=list(range(num_rows, 0, -1)), ticktext=tick_text
     )
 
-    # cheaper grid
-    line_w = 0.5 if plate_type == "384" else 0.8
-    for i in range(1, num_cols + 1):
-        fig.add_shape(type="line", x0=i, y0=0.5, x1=i, y1=num_rows + 0.5, line=dict(color="lightgray", width=line_w))
-    for i in range(1, num_rows + 1):
-        fig.add_shape(type="line", x0=0.5, y0=i, x1=num_cols + 0.5, y1=i, line=dict(color="lightgray", width=line_w))
+    # Grid: solo en modo normal (lite sin shapes)
+    if not lite_mode:
+        line_w = 0.5 if plate_type == "384" else 0.8
+        for i in range(1, num_cols + 1):
+            fig.add_shape(type="line", x0=i, y0=0.5, x1=i, y1=num_rows + 0.5, line=dict(color="lightgray", width=line_w))
+        for i in range(1, num_rows + 1):
+            fig.add_shape(type="line", x0=0.5, y0=i, x1=num_cols + 0.5, y1=i, line=dict(color="lightgray", width=line_w))
 
     fig.update_layout(
         paper_bgcolor='white',
@@ -236,7 +256,6 @@ def combine_plates(plate1, plate2, plate3, plate4):
 # ================
 # History by diffs
 # ================
-
 def push_history_diff(plate_key, well, column, old_value, new_value):
     stack = st.session_state.history[plate_key]
     stack.append(("set", str(well), str(column), old_value, new_value))
@@ -259,7 +278,7 @@ def safe_assign_value(df, well, column, value, plate_key):
     # tipo: solo fuerza string si no es numérico
     try:
         float(value)
-    except ValueError:
+    except Exception:
         if column in df.columns:
             df[column] = df[column].astype(str)
     mask = (df['Well'] == well)
@@ -283,7 +302,6 @@ def copy_plate_data(source_key, dest_key):
 # =========================
 # Caching for downloads
 # =========================
-
 @st.cache_data
 def to_excel(df):
     buf = BytesIO()
@@ -298,7 +316,6 @@ def to_tsv(df):
 # ======
 # Header
 # ======
-
 if logo is not None:
     col1, col2, col3 = st.columns([1, 2, 1.5])
     with col1:
@@ -313,7 +330,6 @@ else:
 # =========================
 # Sidebar: variable manager
 # =========================
-
 st.sidebar.header("Variable Management")
 new_variable = st.sidebar.text_input("Add New Variable")
 if st.sidebar.button("Add Variable") and new_variable:
@@ -356,7 +372,6 @@ for var in st.session_state.available_variables:
 # =========================
 # Tabs
 # =========================
-
 main_tabs = st.tabs(["96-Well Plate", "384-Well Plate"])
 
 # ------------- 96-Well Plate Tab -------------
@@ -400,19 +415,24 @@ with main_tabs[0]:
 
     selected_var_96 = st.selectbox("Select Variable to Visualize", options=["None"] + st.session_state.available_variables, key='select_var_96')
 
-    # recreate figure only if var changed
-    last_var = st.session_state.get("last_var_96")
-    if last_var != selected_var_96 or "fig_96" not in st.session_state:
+    # recreate figure only if var or lite_mode changed
+    last_signature = st.session_state.get("last_sig_96")
+    this_signature = (selected_var_96, lite_mode)
+    if last_signature != this_signature or "fig_96" not in st.session_state:
         st.session_state["fig_96"] = create_plate_figure(
             plate_df_96, plate_type="96",
-            current_variable=None if selected_var_96 == "None" else selected_var_96
+            current_variable=None if selected_var_96 == "None" else selected_var_96,
+            lite_mode=lite_mode
         )
-        st.session_state["last_var_96"] = selected_var_96
+        st.session_state["last_sig_96"] = this_signature
 
     fig_96 = st.session_state["fig_96"]
     selected_points_96 = plotly_events(fig_96, select_event=True, override_height=600, key='plotly_events_96')
 
     if selected_points_96:
+        if len(selected_points_96) > MAX_SELECT:
+            st.info(f"Has seleccionado {len(selected_points_96)} pozos; se usarán los primeros {MAX_SELECT}.")
+            selected_points_96 = selected_points_96[:MAX_SELECT]
         wells = []
         for p in selected_points_96:
             if isinstance(p, dict) and 'pointIndex' in p:
@@ -432,12 +452,14 @@ with main_tabs[0]:
                     for w in st.session_state.sel_wells_96:
                         safe_assign_value(st.session_state[plate_key_96], w, var_to_assign_96, val_to_assign_96, plate_key_96)
                     st.success(f"Assigned '{val_to_assign_96}' to wells.")
-                    # refresh fig colors if variable visible
+                    # refresh fig colors if variable visible or lite changed (lite ya en signature)
                     if selected_var_96 == var_to_assign_96:
                         st.session_state["fig_96"] = create_plate_figure(
                             st.session_state[plate_key_96], plate_type="96",
-                            current_variable=None if selected_var_96 == "None" else selected_var_96
+                            current_variable=None if selected_var_96 == "None" else selected_var_96,
+                            lite_mode=lite_mode
                         )
+                        st.session_state["last_sig_96"] = (selected_var_96, lite_mode)
                 else:
                     st.warning("Enter a value first.")
         else:
@@ -526,16 +548,24 @@ with main_tabs[1]:
         ensure_variables_exist(plate_key)
         var_plate = st.selectbox(f"Select Variable to Visualize (Plate {plate_num})", ["None"] + st.session_state.available_variables, key=f'var_sel_plate_{plate_num}')
 
-        # cache fig per plate
-        last_key = f"last_var_{plate_num}"
+        # cache fig per plate, sensible a lite_mode
+        last_key = f"last_sig_{plate_num}"
         fig_key = f"fig_{plate_num}"
-        if st.session_state.get(last_key) != var_plate or fig_key not in st.session_state:
-            st.session_state[fig_key] = create_plate_figure(df_plate, plate_type="96", current_variable=None if var_plate == "None" else var_plate)
-            st.session_state[last_key] = var_plate
+        sig = (var_plate, lite_mode)
+        if st.session_state.get(last_key) != sig or fig_key not in st.session_state:
+            st.session_state[fig_key] = create_plate_figure(
+                df_plate, plate_type="96",
+                current_variable=None if var_plate == "None" else var_plate,
+                lite_mode=lite_mode
+            )
+            st.session_state[last_key] = sig
 
         fig_p = st.session_state[fig_key]
         points_p = plotly_events(fig_p, select_event=True, override_height=600, key=f'plotly_ev_{plate_num}')
         if points_p:
+            if len(points_p) > MAX_SELECT:
+                st.info(f"Has seleccionado {len(points_p)} pozos; se usarán los primeros {MAX_SELECT}.")
+                points_p = points_p[:MAX_SELECT]
             wells = []
             for p in points_p:
                 if isinstance(p, dict) and 'pointIndex' in p:
@@ -556,8 +586,12 @@ with main_tabs[1]:
                             safe_assign_value(st.session_state[plate_key], w, var_assign, val_assign, plate_key)
                         st.success(f"Assigned '{val_assign}' to wells in Plate {plate_num}.")
                         if var_plate == var_assign:
-                            st.session_state[fig_key] = create_plate_figure(st.session_state[plate_key], plate_type="96",
-                                                                            current_variable=None if var_plate == "None" else var_plate)
+                            st.session_state[fig_key] = create_plate_figure(
+                                st.session_state[plate_key], plate_type="96",
+                                current_variable=None if var_plate == "None" else var_plate,
+                                lite_mode=lite_mode
+                            )
+                            st.session_state[last_key] = (var_plate, lite_mode)
                     else:
                         st.warning("Please enter a value first.")
             else:
@@ -600,16 +634,22 @@ with main_tabs[1]:
 
     var_combined = st.selectbox("Select Variable to Visualize (Combined Plate)", ["None"] + st.session_state.available_variables, key='var_sel_combined')
 
-    if st.session_state.get("last_var_combined") != var_combined or "fig_combined" not in st.session_state:
+    last_sig = st.session_state.get("last_sig_combined")
+    sig = (var_combined, lite_mode)
+    if last_sig != sig or "fig_combined" not in st.session_state:
         st.session_state["fig_combined"] = create_plate_figure(
             combined_df, plate_type="384",
-            current_variable=None if var_combined == "None" else var_combined
+            current_variable=None if var_combined == "None" else var_combined,
+            lite_mode=lite_mode
         )
-        st.session_state["last_var_combined"] = var_combined
+        st.session_state["last_sig_combined"] = sig
 
     fig_combined = st.session_state["fig_combined"]
     points_combined = plotly_events(fig_combined, select_event=True, override_height=800, key='plotly_ev_combined')
     if points_combined:
+        if len(points_combined) > MAX_SELECT:
+            st.info(f"Has seleccionado {len(points_combined)} pozos; se usarán los primeros {MAX_SELECT}.")
+            points_combined = points_combined[:MAX_SELECT]
         wells_c = []
         for p in points_combined:
             if isinstance(p, dict) and 'pointIndex' in p:
@@ -632,8 +672,10 @@ with main_tabs[1]:
                     if var_combined == var_assign_comb:
                         st.session_state["fig_combined"] = create_plate_figure(
                             st.session_state['combined_plate_data'], plate_type="384",
-                            current_variable=None if var_combined == "None" else var_combined
+                            current_variable=None if var_combined == "None" else var_combined,
+                            lite_mode=lite_mode
                         )
+                        st.session_state["last_sig_combined"] = (var_combined, lite_mode)
                 else:
                     st.warning("Enter a value first.")
         else:
