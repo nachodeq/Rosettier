@@ -38,13 +38,13 @@ st.session_state.setdefault("plotly_config", {"displayModeBar": False, "responsi
 # =========================
 # Rendimiento y Sync (sidebar)
 # =========================
-st.sidebar.header("Rendimiento")
-# Por defecto DESACTIVADO (como pediste)
-lite_mode = st.sidebar.checkbox("Modo ligero (recomendado en PCs flojillos)", value=False)
-MAX_SELECT = st.sidebar.number_input("Límite de pozos seleccionables a la vez", min_value=24, max_value=384, value=120, step=12)
+# In sidebar
+st.sidebar.header("Performance")
+lite_mode = st.sidebar.checkbox("Lightweight mode (recommended for slower PCs)", value=False)
 
-st.sidebar.header("Sincronización 96 ↔ 384")
-auto_sync = st.sidebar.checkbox("Sincronizar cambios entre 96 y 384 automáticamente", value=True)
+st.sidebar.header("Synchronization 96 ↔ 384")
+auto_sync = st.sidebar.checkbox("Automatically sync changes between 96 and 384", value=True)
+
 
 # =========================
 # Constants & plate geometry
