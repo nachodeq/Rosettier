@@ -36,11 +36,15 @@ logo = load_image(logo_path) if os.path.exists(logo_path) else None
 st.session_state.setdefault("plotly_config", {"displayModeBar": False, "responsive": True})
 
 # =========================
-# Rendimiento (modo ligero)
+# Rendimiento y Sync (sidebar)
 # =========================
-st.sidebar.header("Performance")
-lite_mode = st.sidebar.checkbox("Lite mode (for older or slower machines)", value=False)
-MAX_SELECT = st.sidebar.number_input("Max wells selected at the same time", min_value=24, max_value=384, value=120, step=12)
+st.sidebar.header("Rendimiento")
+# Por defecto DESACTIVADO (como pediste)
+lite_mode = st.sidebar.checkbox("Modo ligero (recomendado en PCs flojillos)", value=False)
+MAX_SELECT = st.sidebar.number_input("Límite de pozos seleccionables a la vez", min_value=24, max_value=384, value=120, step=12)
+
+st.sidebar.header("Sincronización 96 ↔ 384")
+auto_sync = st.sidebar.checkbox("Sincronizar cambios entre 96 y 384 automáticamente", value=True)
 
 # =========================
 # Constants & plate geometry
@@ -52,6 +56,12 @@ columns_384 = list(range(1, 25))
 
 row_indices_96 = {row: 8 - i for i, row in enumerate(rows_96)}
 row_indices_384 = {row: 16 - i for i, row in enumerate(rows_384)}
+
+# Mapeos índice<->letra
+row_to_idx_96 = {r: i for i, r in enumerate(rows_96)}
+idx_to_row_96 = {i: r for i, r in enumerate(rows_96)}
+row_to_idx_384 = {r: i for i, r in enumerate(rows_384)}
+idx_to_row_384 = {i: r for i, r in enumerate(rows_384)}
 
 # ==================================
 # Session state bootstrapping / init
@@ -221,37 +231,46 @@ def create_plate_figure(df: pd.DataFrame, plate_type="96", current_variable=None
     )
     return fig
 
-def combine_plate_vectorized(plate_df, row_offset, col_offset):
-    plate_df = plate_df.copy()
-    plate_df['row_letter'] = plate_df['Well'].str[0]
-    plate_df['col_num'] = plate_df['Well'].str[1:].astype(int)
-    row_map = {r: i for i, r in enumerate(rows_96)}
-    plate_df['row_idx_96'] = plate_df['row_letter'].map(row_map)
-    plate_df['combined_row_idx'] = plate_df['row_idx_96'] * 2 + row_offset
-    plate_df['combined_col'] = (plate_df['col_num'] - 1) * 2 + col_offset + 1
-    valid = (plate_df['combined_row_idx'] < len(rows_384)) & (plate_df['combined_col'] <= max(columns_384))
-    plate_df = plate_df[valid].copy()
-    plate_df['combined_row'] = plate_df['combined_row_idx'].apply(lambda idx: rows_384[int(idx)])
-    plate_df['combined_well'] = plate_df['combined_row'] + plate_df['combined_col'].astype(str)
-    return plate_df
+# ---------- Mapeos 96 <-> 384 ----------
+def map_96_to_384_well(plate_num: int, well96: str) -> str:
+    """
+    plate_num in {1,2,3,4}
+    1:(row_off=0,col_off=0), 2:(0,1), 3:(1,0), 4:(1,1)
+    """
+    row_off = 0 if plate_num in (1, 2) else 1
+    col_off = 0 if plate_num in (1, 3) else 1
 
-def combine_plates(plate1, plate2, plate3, plate4):
-    combined_plate_df = st.session_state.combined_plate_data.copy().set_index('Well')
-    plate_mappings = {
-        1: {'plate_data': plate1, 'row_offset': 0, 'col_offset': 0},
-        2: {'plate_data': plate2, 'row_offset': 0, 'col_offset': 1},
-        3: {'plate_data': plate3, 'row_offset': 1, 'col_offset': 0},
-        4: {'plate_data': plate4, 'row_offset': 1, 'col_offset': 1},
-    }
-    for plate_num, mapping in plate_mappings.items():
-        plate_df = normalize_well_column(mapping['plate_data'])
-        mapped_df = combine_plate_vectorized(plate_df, mapping['row_offset'], mapping['col_offset'])
-        for variable in st.session_state.available_variables:
-            if variable in mapped_df.columns:
-                updates = mapped_df.set_index('combined_well')[variable].dropna()
-                idx = combined_plate_df.index.intersection(updates.index)
-                combined_plate_df.loc[idx, variable] = updates.loc[idx]
-    st.session_state.combined_plate_data = combined_plate_df.reset_index()
+    r, c = parse_well(well96)  # r='A'..'H', c=1..12
+    r96 = row_to_idx_96[r]     # 0..7
+    # fórmulas del combinado
+    r384_idx = r96 * 2 + row_off
+    c384 = (c - 1) * 2 + col_off + 1  # 1..24
+    r384 = idx_to_row_384[r384_idx]
+    return f"{r384}{c384}"
+
+def map_384_to_96_well(well384: str) -> tuple[int, str]:
+    """
+    Devuelve: (plate_num, well96)
+    plate_num en {1,2,3,4}
+    """
+    r, c = parse_well(well384)      # r='A'..'P', c=1..24
+    r384_idx = row_to_idx_384[r]    # 0..15
+    row_off = r384_idx % 2          # 0 -> placas 1/2, 1 -> 3/4
+    col_off = (c % 2 == 0)          # True (1) si columna es par -> placas 2/4
+    # plate_num
+    if row_off == 0 and not col_off:
+        plate_num = 1
+    elif row_off == 0 and col_off:
+        plate_num = 2
+    elif row_off == 1 and not col_off:
+        plate_num = 3
+    else:
+        plate_num = 4
+    # índice de fila 96 y columna 96
+    r96_idx = (r384_idx - row_off) // 2  # 0..7
+    c96 = ((c - 1) - (1 if col_off else 0)) // 2 + 1  # 1..12
+    r96 = idx_to_row_96[r96_idx]
+    return plate_num, f"{r96}{c96}"
 
 # ================
 # History by diffs
@@ -288,6 +307,22 @@ def safe_assign_value(df, well, column, value, plate_key):
     push_history_diff(plate_key, well, column, old_value, value)
     df.loc[mask, column] = value
     st.session_state[plate_key] = df  # no copy() innecesaria
+
+def assign_and_sync_from_96(plate_num: int, well: str, var: str, val):
+    """Asigna en 96 y (si auto_sync) refleja en 384"""
+    plate_key = f'plate_{plate_num}_384_data'
+    safe_assign_value(st.session_state[plate_key], well, var, val, plate_key)
+    if auto_sync:
+        comb_well = map_96_to_384_well(plate_num, well)
+        safe_assign_value(st.session_state['combined_plate_data'], comb_well, var, val, 'combined_plate_data')
+
+def assign_and_sync_from_384(well: str, var: str, val):
+    """Asigna en 384 y (si auto_sync) refleja en su 96 correspondiente"""
+    safe_assign_value(st.session_state['combined_plate_data'], well, var, val, 'combined_plate_data')
+    if auto_sync:
+        plate_num, well96 = map_384_to_96_well(well)
+        plate_key = f'plate_{plate_num}_384_data'
+        safe_assign_value(st.session_state[plate_key], well96, var, val, plate_key)
 
 def copy_plate_data(source_key, dest_key):
     source_df = st.session_state[source_key].copy(deep=True)
@@ -450,9 +485,12 @@ with main_tabs[0]:
             if st.button("Assign Value to Selected Wells", key='btn_assign_96'):
                 if val_to_assign_96:
                     for w in st.session_state.sel_wells_96:
+                        # Asigna también a las sub-placas 1..4 si existen ese pozo
+                        # (esta vista 'plate_96_data' es una plantilla; si quieres,
+                        # podrías copiar desde aquí a plate_1_384_data con un botón aparte)
                         safe_assign_value(st.session_state[plate_key_96], w, var_to_assign_96, val_to_assign_96, plate_key_96)
-                    st.success(f"Assigned '{val_to_assign_96}' to wells.")
-                    # refresh fig colors if variable visible or lite changed (lite ya en signature)
+                    st.success(f"Assigned '{val_to_assign_96}' to wells in 96 base.")
+                    # refresca figura si variable visible
                     if selected_var_96 == var_to_assign_96:
                         st.session_state["fig_96"] = create_plate_figure(
                             st.session_state[plate_key_96], plate_type="96",
@@ -501,6 +539,63 @@ with main_tabs[1]:
     st.subheader("Manage 384-Well Plate")
     st.info("Manage four separate 96-well plates to combine into a single 384-well plate.")
 
+    # ======= Upload 384 =======
+    st.markdown("**Upload 384-well plate (Excel/TSV/CSV)**")
+    up_384_file = st.file_uploader("Upload a 384-well plate file", type=["xlsx", "csv", "tsv"], key="upload_384")
+    if up_384_file and not st.session_state.get("uploaded_384_processed", False):
+        file_extension = up_384_file.name.split('.')[-1].lower()
+        try:
+            if file_extension == "xlsx":
+                uploaded_384 = pd.read_excel(up_384_file)
+            else:
+                sep = "\t" if file_extension == "tsv" else ","
+                uploaded_384 = pd.read_csv(up_384_file, sep=sep)
+            uploaded_384 = normalize_well_column(uploaded_384)
+            if len(uploaded_384) != 384:
+                st.error("Uploaded file must have exactly 384 rows.")
+            elif "Well" not in uploaded_384.columns:
+                st.error("The file must contain a 'Well' column.")
+            else:
+                # amplía variables si vienen nuevas
+                new_cols = [c for c in uploaded_384.columns if c not in ["Well"]]
+                for col in new_cols:
+                    if col not in st.session_state.available_variables:
+                        st.session_state.available_variables.append(col)
+                        # añade columna en todas las placas
+                        for key in ['plate_96_data', 'plate_1_384_data', 'plate_2_384_data', 'plate_3_384_data', 'plate_4_384_data', 'combined_plate_data']:
+                            if col not in st.session_state[key].columns:
+                                st.session_state[key][col] = pd.NA
+                st.session_state['combined_plate_data'] = uploaded_384.copy()
+                st.success("Successfully loaded 384-well data!")
+                st.session_state.uploaded_384_processed = True
+        except Exception as e:
+            st.error(f"Failed to read 384 file: {e}")
+
+    # ======= Split 384 → 4x96 =======
+    if st.button("Split current 384 into four 96-well plates (overwrite Plates 1–4)", key='btn_split_384'):
+        comb = st.session_state['combined_plate_data']
+        # arranca nuevas
+        new_plates = {i: wells_96_df() for i in [1, 2, 3, 4]}
+        # garantiza columnas
+        for i in [1, 2, 3, 4]:
+            for var in st.session_state.available_variables:
+                if var not in new_plates[i].columns:
+                    new_plates[i][var] = pd.NA
+        # distribuye valores
+        for _, row in comb.iterrows():
+            well384 = row['Well']
+            plate_num, well96 = map_384_to_96_well(well384)
+            for var in st.session_state.available_variables:
+                val = row.get(var, pd.NA)
+                if pd.isna(val):
+                    continue
+                mask = (new_plates[plate_num]['Well'] == well96)
+                new_plates[plate_num].loc[mask, var] = val
+        # sobreescribe
+        for i in [1, 2, 3, 4]:
+            st.session_state[f'plate_{i}_384_data'] = new_plates[i]
+        st.success("Split done: Plates 1–4 updated from current 384.")
+
     plate_subtabs = st.tabs([f"Plate {i}" for i in range(1, 5)])
 
     def manage_plate(plate_num: int):
@@ -539,6 +634,10 @@ with main_tabs[1]:
                     for col in new_cols:
                         if col not in st.session_state.available_variables:
                             st.session_state.available_variables.append(col)
+                            # añade columna en todas las placas
+                            for key in ['plate_96_data', 'plate_1_384_data', 'plate_2_384_data', 'plate_3_384_data', 'plate_4_384_data', 'combined_plate_data']:
+                                if col not in st.session_state[key].columns:
+                                    st.session_state[key][col] = pd.NA
                     ensure_variables_exist(plate_key)
                     st.success(f"Loaded data into Plate {plate_num}.")
                     st.session_state[f"uploaded_plate_{plate_num}_processed"] = True
@@ -583,7 +682,7 @@ with main_tabs[1]:
                 if st.button(f"Assign Value (Plate {plate_num})", key=f'btn_assign_{plate_num}'):
                     if val_assign:
                         for w in st.session_state[f"sel_wells_{plate_num}"]:
-                            safe_assign_value(st.session_state[plate_key], w, var_assign, val_assign, plate_key)
+                            assign_and_sync_from_96(plate_num, w, var_assign, val_assign)
                         st.success(f"Assigned '{val_assign}' to wells in Plate {plate_num}.")
                         if var_plate == var_assign:
                             st.session_state[fig_key] = create_plate_figure(
@@ -601,6 +700,7 @@ with main_tabs[1]:
         disp_cols_sub = ['Well'] + st.session_state.available_variables
         st.dataframe(st.session_state[plate_key][disp_cols_sub], height=420, use_container_width=True)
 
+    # Subtabs 1–4
     for i in range(1, 5):
         with plate_subtabs[i - 1]:
             manage_plate(i)
@@ -615,12 +715,38 @@ with main_tabs[1]:
     ... and so on.
     """)
 
+    # ======= Combine 4x96 → 384 =======
     if st.button("Combine All Plates into 384-Well Plate", key='btn_combine_384'):
         plate1 = st.session_state['plate_1_384_data']
         plate2 = st.session_state['plate_2_384_data']
         plate3 = st.session_state['plate_3_384_data']
         plate4 = st.session_state['plate_4_384_data']
-        combine_plates(plate1, plate2, plate3, plate4)
+        # combinación vectorizada
+        combined_plate_df = st.session_state.combined_plate_data.copy().set_index('Well')
+        plate_mappings = {
+            1: {'plate_data': plate1, 'row_offset': 0, 'col_offset': 0},
+            2: {'plate_data': plate2, 'row_offset': 0, 'col_offset': 1},
+            3: {'plate_data': plate3, 'row_offset': 1, 'col_offset': 0},
+            4: {'plate_data': plate4, 'row_offset': 1, 'col_offset': 1},
+        }
+        for plate_num, mapping in plate_mappings.items():
+            plate_df = mapping['plate_data'].copy()
+            plate_df['row_letter'] = plate_df['Well'].str[0]
+            plate_df['col_num'] = plate_df['Well'].str[1:].astype(int)
+            row_map = {r: i for i, r in enumerate(rows_96)}
+            plate_df['row_idx_96'] = plate_df['row_letter'].map(row_map)
+            plate_df['combined_row_idx'] = plate_df['row_idx_96'] * 2 + mapping['row_offset']
+            plate_df['combined_col'] = (plate_df['col_num'] - 1) * 2 + mapping['col_offset'] + 1
+            valid = (plate_df['combined_row_idx'] < len(rows_384)) & (plate_df['combined_col'] <= max(columns_384))
+            plate_df = plate_df[valid].copy()
+            plate_df['combined_row'] = plate_df['combined_row_idx'].apply(lambda idx: rows_384[int(idx)])
+            plate_df['combined_well'] = plate_df['combined_row'] + plate_df['combined_col'].astype(str)
+            for variable in st.session_state.available_variables:
+                if variable in plate_df.columns:
+                    updates = plate_df.set_index('combined_well')[variable].dropna()
+                    idx = combined_plate_df.index.intersection(updates.index)
+                    combined_plate_df.loc[idx, variable] = updates.loc[idx]
+        st.session_state.combined_plate_data = combined_plate_df.reset_index()
         st.success("Successfully combined the four 96-well plates into a 384-well plate.")
 
     if st.button("Undo Last Action (Combined Plate)", key='undo_combined'):
@@ -667,7 +793,7 @@ with main_tabs[1]:
             if st.button("Assign Value (Combined Plate)", key='btn_assign_comb'):
                 if val_assign_comb:
                     for w in st.session_state.sel_wells_combined:
-                        safe_assign_value(st.session_state['combined_plate_data'], w, var_assign_comb, val_assign_comb, 'combined_plate_data')
+                        assign_and_sync_from_384(w, var_assign_comb, val_assign_comb)
                     st.success(f"Assigned '{val_assign_comb}' to selected wells in Combined Plate.")
                     if var_combined == var_assign_comb:
                         st.session_state["fig_combined"] = create_plate_figure(
