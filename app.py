@@ -32,19 +32,22 @@ st.set_page_config(page_title="Rosettier", page_icon=favicon, layout="centered")
 logo_path = resource_path("assets/logo.png")
 logo = load_image(logo_path) if os.path.exists(logo_path) else None
 
-# Config global para Plotly (cuando no usamos plotly_events)
+# Global Plotly config (for st.plotly_chart when not using plotly_events)
 st.session_state.setdefault("plotly_config", {"displayModeBar": False, "responsive": True})
 
 # =========================
-# Rendimiento y Sync (sidebar)
+# Performance & Sync (sidebar) — ENGLISH
 # =========================
-# In sidebar
 st.sidebar.header("Performance")
+# Default OFF, as requested
 lite_mode = st.sidebar.checkbox("Lightweight mode (recommended for slower PCs)", value=False)
+MAX_SELECT = st.sidebar.number_input(
+    "Selection limit (wells at once)",
+    min_value=24, max_value=384, value=120, step=12
+)
 
 st.sidebar.header("Synchronization 96 ↔ 384")
 auto_sync = st.sidebar.checkbox("Automatically sync changes between 96 and 384", value=True)
-
 
 # =========================
 # Constants & plate geometry
@@ -57,7 +60,7 @@ columns_384 = list(range(1, 25))
 row_indices_96 = {row: 8 - i for i, row in enumerate(rows_96)}
 row_indices_384 = {row: 16 - i for i, row in enumerate(rows_384)}
 
-# Mapeos índice<->letra
+# Row index maps
 row_to_idx_96 = {r: i for i, r in enumerate(rows_96)}
 idx_to_row_96 = {i: r for i, r in enumerate(rows_96)}
 row_to_idx_384 = {r: i for i, r in enumerate(rows_384)}
@@ -75,7 +78,7 @@ for p in (1, 2, 3, 4):
     st.session_state.setdefault(f"sel_wells_{p}", [])
 st.session_state.setdefault("sel_wells_combined", [])
 
-# history as diffs
+# History as diffs
 if 'history' not in st.session_state:
     st.session_state.history = {
         'plate_96_data': [],
@@ -105,7 +108,7 @@ def initialize_plates():
     if 'combined_plate_data' not in st.session_state:
         st.session_state.combined_plate_data = wells_384_df()
 
-    # ensure variables columns exist
+    # Ensure variable columns exist
     for key in ['plate_96_data', 'plate_1_384_data', 'plate_2_384_data', 'plate_3_384_data', 'plate_4_384_data', 'combined_plate_data']:
         for var in st.session_state.available_variables:
             if var not in st.session_state[key].columns:
@@ -164,7 +167,7 @@ def create_plate_figure(df: pd.DataFrame, plate_type="96", current_variable=None
     df_plot['Y'] = df_plot['Parsed_Row'].map(row_indices)
     df_plot['X'] = df_plot['Parsed_Col']
 
-    # colores
+    # Colors
     if current_variable and current_variable in df_plot.columns:
         vals = df_plot[current_variable]
         colors = [value_color(current_variable, v) for v in vals]
@@ -180,10 +183,10 @@ def create_plate_figure(df: pd.DataFrame, plate_type="96", current_variable=None
     else:
         hovertexts = df_plot['Well']
 
-    # USAR WEBGL en modo ligero
+    # Use WebGL in lightweight mode
     ScatterClass = go.Scattergl if lite_mode else go.Scatter
 
-    show_text = (plate_type == "96") and (not lite_mode)  # en lite no texto, en 96 normal sí
+    show_text = (plate_type == "96") and (not lite_mode)  # text visible only on 96 & non-lite
     mode = 'markers+text' if show_text else 'markers'
 
     fig = go.Figure()
@@ -210,7 +213,7 @@ def create_plate_figure(df: pd.DataFrame, plate_type="96", current_variable=None
         showticklabels=True, tickmode='array', tickvals=list(range(num_rows, 0, -1)), ticktext=tick_text
     )
 
-    # Grid: solo en modo normal (lite sin shapes)
+    # Grid only in normal mode
     if not lite_mode:
         line_w = 0.5 if plate_type == "384" else 0.8
         for i in range(1, num_cols + 1):
@@ -227,11 +230,11 @@ def create_plate_figure(df: pd.DataFrame, plate_type="96", current_variable=None
         clickmode='event+select',
         dragmode='select',
         margin=dict(l=20, r=20, t=80, b=20),
-        uirevision="keep"  # evita redraw completo entre reruns
+        uirevision="keep"  # keep client-side state
     )
     return fig
 
-# ---------- Mapeos 96 <-> 384 ----------
+# ---------- Mappings 96 <-> 384 ----------
 def map_96_to_384_well(plate_num: int, well96: str) -> str:
     """
     plate_num in {1,2,3,4}
@@ -242,7 +245,6 @@ def map_96_to_384_well(plate_num: int, well96: str) -> str:
 
     r, c = parse_well(well96)  # r='A'..'H', c=1..12
     r96 = row_to_idx_96[r]     # 0..7
-    # fórmulas del combinado
     r384_idx = r96 * 2 + row_off
     c384 = (c - 1) * 2 + col_off + 1  # 1..24
     r384 = idx_to_row_384[r384_idx]
@@ -250,14 +252,13 @@ def map_96_to_384_well(plate_num: int, well96: str) -> str:
 
 def map_384_to_96_well(well384: str) -> tuple[int, str]:
     """
-    Devuelve: (plate_num, well96)
-    plate_num en {1,2,3,4}
+    Return: (plate_num, well96), plate_num in {1,2,3,4}
     """
     r, c = parse_well(well384)      # r='A'..'P', c=1..24
     r384_idx = row_to_idx_384[r]    # 0..15
-    row_off = r384_idx % 2          # 0 -> placas 1/2, 1 -> 3/4
-    col_off = (c % 2 == 0)          # True (1) si columna es par -> placas 2/4
-    # plate_num
+    row_off = r384_idx % 2          # 0 -> plates 1/2, 1 -> 3/4
+    col_off = (c % 2 == 0)          # True (1) if column is even -> plates 2/4
+
     if row_off == 0 and not col_off:
         plate_num = 1
     elif row_off == 0 and col_off:
@@ -266,7 +267,7 @@ def map_384_to_96_well(well384: str) -> tuple[int, str]:
         plate_num = 3
     else:
         plate_num = 4
-    # índice de fila 96 y columna 96
+
     r96_idx = (r384_idx - row_off) // 2  # 0..7
     c96 = ((c - 1) - (1 if col_off else 0)) // 2 + 1  # 1..12
     r96 = idx_to_row_96[r96_idx]
@@ -294,7 +295,7 @@ def undo(plate_key):
         st.success(f"Undo: {plate_key} — {well}.{column} ← {old_value}")
 
 def safe_assign_value(df, well, column, value, plate_key):
-    # tipo: solo fuerza string si no es numérico
+    # Type: force string only if non-numeric
     try:
         float(value)
     except Exception:
@@ -306,10 +307,10 @@ def safe_assign_value(df, well, column, value, plate_key):
     old_value = df.loc[mask, column].iloc[0]
     push_history_diff(plate_key, well, column, old_value, value)
     df.loc[mask, column] = value
-    st.session_state[plate_key] = df  # no copy() innecesaria
+    st.session_state[plate_key] = df  # no unnecessary copy()
 
 def assign_and_sync_from_96(plate_num: int, well: str, var: str, val):
-    """Asigna en 96 y (si auto_sync) refleja en 384"""
+    """Assign in 96 and (if auto_sync) mirror in 384"""
     plate_key = f'plate_{plate_num}_384_data'
     safe_assign_value(st.session_state[plate_key], well, var, val, plate_key)
     if auto_sync:
@@ -317,7 +318,7 @@ def assign_and_sync_from_96(plate_num: int, well: str, var: str, val):
         safe_assign_value(st.session_state['combined_plate_data'], comb_well, var, val, 'combined_plate_data')
 
 def assign_and_sync_from_384(well: str, var: str, val):
-    """Asigna en 384 y (si auto_sync) refleja en su 96 correspondiente"""
+    """Assign in 384 and (if auto_sync) mirror in corresponding 96"""
     safe_assign_value(st.session_state['combined_plate_data'], well, var, val, 'combined_plate_data')
     if auto_sync:
         plate_num, well96 = map_384_to_96_well(well)
@@ -363,10 +364,10 @@ else:
     st.title("Rosettier")
 
 # =========================
-# Sidebar: variable manager
+# Sidebar: Variable manager
 # =========================
 st.sidebar.header("Variable Management")
-new_variable = st.sidebar.text_input("Add New Variable")
+new_variable = st.sidebar.text_input("Add new variable")
 if st.sidebar.button("Add Variable") and new_variable:
     if new_variable not in st.session_state.available_variables:
         st.session_state.available_variables.append(new_variable)
@@ -382,7 +383,7 @@ st.sidebar.header("Variables Legend")
 max_legend = 30
 for var in st.session_state.available_variables:
     st.sidebar.markdown(f"**{var}**")
-    # muestra valores únicos (capado)
+    # Unique values (capped)
     uniq_vals = []
     for key in ['plate_96_data', 'combined_plate_data']:
         if var in st.session_state[key].columns:
@@ -394,7 +395,7 @@ for var in st.session_state.available_variables:
             continue
         seen.add(v)
         if shown >= max_legend:
-            st.sidebar.markdown("_… (leyenda truncada)_")
+            st.sidebar.markdown("_… legend truncated …_")
             break
         st.sidebar.markdown(f"<span style='color:{value_color(var, v)}'>⬤</span> {v}", unsafe_allow_html=True)
         shown += 1
@@ -448,9 +449,9 @@ with main_tabs[0]:
     plate_key_96 = 'plate_96_data'
     plate_df_96 = st.session_state[plate_key_96]
 
-    selected_var_96 = st.selectbox("Select Variable to Visualize", options=["None"] + st.session_state.available_variables, key='select_var_96')
+    selected_var_96 = st.selectbox("Select variable to visualize", options=["None"] + st.session_state.available_variables, key='select_var_96')
 
-    # recreate figure only if var or lite_mode changed
+    # Recreate figure only if var or lite_mode changed
     last_signature = st.session_state.get("last_sig_96")
     this_signature = (selected_var_96, lite_mode)
     if last_signature != this_signature or "fig_96" not in st.session_state:
@@ -466,7 +467,7 @@ with main_tabs[0]:
 
     if selected_points_96:
         if len(selected_points_96) > MAX_SELECT:
-            st.info(f"Has seleccionado {len(selected_points_96)} pozos; se usarán los primeros {MAX_SELECT}.")
+            st.info(f"You selected {len(selected_points_96)} wells; only the first {MAX_SELECT} will be used.")
             selected_points_96 = selected_points_96[:MAX_SELECT]
         wells = []
         for p in selected_points_96:
@@ -480,17 +481,14 @@ with main_tabs[0]:
 
     if st.session_state.sel_wells_96:
         if st.session_state.available_variables:
-            var_to_assign_96 = st.selectbox("Select Variable to Assign", st.session_state.available_variables, key='assign_var_96')
+            var_to_assign_96 = st.selectbox("Select variable to assign", st.session_state.available_variables, key='assign_var_96')
             val_to_assign_96 = st.text_input(f"Value for '{var_to_assign_96}'", key='val_assign_96')
-            if st.button("Assign Value to Selected Wells", key='btn_assign_96'):
+            if st.button("Assign value to selected wells", key='btn_assign_96'):
                 if val_to_assign_96:
                     for w in st.session_state.sel_wells_96:
-                        # Asigna también a las sub-placas 1..4 si existen ese pozo
-                        # (esta vista 'plate_96_data' es una plantilla; si quieres,
-                        # podrías copiar desde aquí a plate_1_384_data con un botón aparte)
+                        # Assign in the base 96 template (separate from plates 1–4)
                         safe_assign_value(st.session_state[plate_key_96], w, var_to_assign_96, val_to_assign_96, plate_key_96)
                     st.success(f"Assigned '{val_to_assign_96}' to wells in 96 base.")
-                    # refresca figura si variable visible
                     if selected_var_96 == var_to_assign_96:
                         st.session_state["fig_96"] = create_plate_figure(
                             st.session_state[plate_key_96], plate_type="96",
@@ -507,7 +505,7 @@ with main_tabs[0]:
     display_cols_96 = ['Well'] + st.session_state.available_variables
     st.dataframe(st.session_state[plate_key_96][display_cols_96], height=420, use_container_width=True)
 
-    st.header("Download Configuration")
+    st.header("Download configuration")
     filename_96 = st.text_input("Base name for 96-well download:", value="Rosettier_Plate_96", key='dl_name_96') or "Rosettier_Plate_96"
 
     has_na_96 = st.session_state[plate_key_96][st.session_state.available_variables].isna().any().any() if st.session_state.available_variables else False
@@ -556,12 +554,12 @@ with main_tabs[1]:
             elif "Well" not in uploaded_384.columns:
                 st.error("The file must contain a 'Well' column.")
             else:
-                # amplía variables si vienen nuevas
+                # Expand variables if new ones arrive
                 new_cols = [c for c in uploaded_384.columns if c not in ["Well"]]
                 for col in new_cols:
                     if col not in st.session_state.available_variables:
                         st.session_state.available_variables.append(col)
-                        # añade columna en todas las placas
+                        # Add column to all plates
                         for key in ['plate_96_data', 'plate_1_384_data', 'plate_2_384_data', 'plate_3_384_data', 'plate_4_384_data', 'combined_plate_data']:
                             if col not in st.session_state[key].columns:
                                 st.session_state[key][col] = pd.NA
@@ -574,14 +572,13 @@ with main_tabs[1]:
     # ======= Split 384 → 4x96 =======
     if st.button("Split current 384 into four 96-well plates (overwrite Plates 1–4)", key='btn_split_384'):
         comb = st.session_state['combined_plate_data']
-        # arranca nuevas
         new_plates = {i: wells_96_df() for i in [1, 2, 3, 4]}
-        # garantiza columnas
+        # Ensure columns
         for i in [1, 2, 3, 4]:
             for var in st.session_state.available_variables:
                 if var not in new_plates[i].columns:
                     new_plates[i][var] = pd.NA
-        # distribuye valores
+        # Distribute values
         for _, row in comb.iterrows():
             well384 = row['Well']
             plate_num, well96 = map_384_to_96_well(well384)
@@ -591,7 +588,7 @@ with main_tabs[1]:
                     continue
                 mask = (new_plates[plate_num]['Well'] == well96)
                 new_plates[plate_num].loc[mask, var] = val
-        # sobreescribe
+        # Overwrite
         for i in [1, 2, 3, 4]:
             st.session_state[f'plate_{i}_384_data'] = new_plates[i]
         st.success("Split done: Plates 1–4 updated from current 384.")
@@ -634,7 +631,7 @@ with main_tabs[1]:
                     for col in new_cols:
                         if col not in st.session_state.available_variables:
                             st.session_state.available_variables.append(col)
-                            # añade columna en todas las placas
+                            # Add column to all plates
                             for key in ['plate_96_data', 'plate_1_384_data', 'plate_2_384_data', 'plate_3_384_data', 'plate_4_384_data', 'combined_plate_data']:
                                 if col not in st.session_state[key].columns:
                                     st.session_state[key][col] = pd.NA
@@ -645,9 +642,9 @@ with main_tabs[1]:
                 st.error(f"Error reading file: {e}")
 
         ensure_variables_exist(plate_key)
-        var_plate = st.selectbox(f"Select Variable to Visualize (Plate {plate_num})", ["None"] + st.session_state.available_variables, key=f'var_sel_plate_{plate_num}')
+        var_plate = st.selectbox(f"Select variable to visualize (Plate {plate_num})", ["None"] + st.session_state.available_variables, key=f'var_sel_plate_{plate_num}')
 
-        # cache fig per plate, sensible a lite_mode
+        # Cache fig per plate, sensitive to lite_mode
         last_key = f"last_sig_{plate_num}"
         fig_key = f"fig_{plate_num}"
         sig = (var_plate, lite_mode)
@@ -663,7 +660,7 @@ with main_tabs[1]:
         points_p = plotly_events(fig_p, select_event=True, override_height=600, key=f'plotly_ev_{plate_num}')
         if points_p:
             if len(points_p) > MAX_SELECT:
-                st.info(f"Has seleccionado {len(points_p)} pozos; se usarán los primeros {MAX_SELECT}.")
+                st.info(f"You selected {len(points_p)} wells; only the first {MAX_SELECT} will be used.")
                 points_p = points_p[:MAX_SELECT]
             wells = []
             for p in points_p:
@@ -679,7 +676,7 @@ with main_tabs[1]:
             if st.session_state.available_variables:
                 var_assign = st.selectbox(f"Assign which variable? (Plate {plate_num})", st.session_state.available_variables, key=f'assign_var_plate_{plate_num}')
                 val_assign = st.text_input(f"Value for '{var_assign}' (Plate {plate_num})", key=f'val_assign_{plate_num}')
-                if st.button(f"Assign Value (Plate {plate_num})", key=f'btn_assign_{plate_num}'):
+                if st.button(f"Assign value (Plate {plate_num})", key=f'btn_assign_{plate_num}'):
                     if val_assign:
                         for w in st.session_state[f"sel_wells_{plate_num}"]:
                             assign_and_sync_from_96(plate_num, w, var_assign, val_assign)
@@ -692,7 +689,7 @@ with main_tabs[1]:
                             )
                             st.session_state[last_key] = (var_plate, lite_mode)
                     else:
-                        st.warning("Please enter a value first.")
+                        st.warning("Enter a value first.")
             else:
                 st.info("No variables available. Add in the sidebar first.")
 
@@ -721,7 +718,7 @@ with main_tabs[1]:
         plate2 = st.session_state['plate_2_384_data']
         plate3 = st.session_state['plate_3_384_data']
         plate4 = st.session_state['plate_4_384_data']
-        # combinación vectorizada
+        # Vectorized combination
         combined_plate_df = st.session_state.combined_plate_data.copy().set_index('Well')
         plate_mappings = {
             1: {'plate_data': plate1, 'row_offset': 0, 'col_offset': 0},
@@ -758,7 +755,7 @@ with main_tabs[1]:
     disp_cols_combined = ['Well'] + st.session_state.available_variables
     st.dataframe(combined_df[disp_cols_combined], height=420, use_container_width=True)
 
-    var_combined = st.selectbox("Select Variable to Visualize (Combined Plate)", ["None"] + st.session_state.available_variables, key='var_sel_combined')
+    var_combined = st.selectbox("Select variable to visualize (Combined Plate)", ["None"] + st.session_state.available_variables, key='var_sel_combined')
 
     last_sig = st.session_state.get("last_sig_combined")
     sig = (var_combined, lite_mode)
@@ -774,7 +771,7 @@ with main_tabs[1]:
     points_combined = plotly_events(fig_combined, select_event=True, override_height=800, key='plotly_ev_combined')
     if points_combined:
         if len(points_combined) > MAX_SELECT:
-            st.info(f"Has seleccionado {len(points_combined)} pozos; se usarán los primeros {MAX_SELECT}.")
+            st.info(f"You selected {len(points_combined)} wells; only the first {MAX_SELECT} will be used.")
             points_combined = points_combined[:MAX_SELECT]
         wells_c = []
         for p in points_combined:
@@ -790,7 +787,7 @@ with main_tabs[1]:
         if st.session_state.available_variables:
             var_assign_comb = st.selectbox("Assign which variable? (Combined Plate)", st.session_state.available_variables, key='assign_var_combined')
             val_assign_comb = st.text_input(f"Value for '{var_assign_comb}' (Combined Plate)", key='val_assign_comb')
-            if st.button("Assign Value (Combined Plate)", key='btn_assign_comb'):
+            if st.button("Assign value (Combined Plate)", key='btn_assign_comb'):
                 if val_assign_comb:
                     for w in st.session_state.sel_wells_combined:
                         assign_and_sync_from_384(w, var_assign_comb, val_assign_comb)
@@ -807,7 +804,7 @@ with main_tabs[1]:
         else:
             st.info("No variables available. Add in the sidebar first.")
 
-    st.header("Download Combined 384-Well Configuration")
+    st.header("Download combined 384-well configuration")
     dl_name_combined = st.text_input("Base name for combined 384-well download:", value="Rosettier_384_Plate", key='dl_name_384') or "Rosettier_384_Plate"
 
     has_na_combined = combined_df[st.session_state.available_variables].isna().any().any() if st.session_state.available_variables else False
